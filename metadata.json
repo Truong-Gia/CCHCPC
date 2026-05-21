@@ -1,0 +1,6 @@
+{
+  "name": "Quản lý Văn bản Cải cách Hành chính & Pháp chế",
+  "description": "Hệ thống quản lý văn bản, quyết định thuộc lĩnh vực Cải cách hành chính và Pháp chế chi tiết",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,51 @@
+{
+  "entities": {
+    "Document": {
+      "title": "Document",
+      "description": "Stores administrative and legal decision documents",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique document ID" },
+        "loaiVanBan": { "type": "string", "enum": ["Nghị quyết", "Quyết định"], "description": "The type of document" },
+        "soBanHanh": { "type": "string", "description": "The official document or resolution number" },
+        "trichYeu": { "type": "string", "description": "Summary or main quote of the document" },
+        "ngayBanHanh": { "type": "string", "format": "date", "description": "Resolution issuance date" },
+        "ngayCoHieuLuc": { "type": "string", "format": "date", "description": "Effective implementation date" },
+        "donViBanHanh": { "type": "string", "enum": ["Hội đồng nhân dân tỉnh", "Ủy ban nhân dân tỉnh"], "description": "The governmental body issuing the document" },
+        "donViThamMuu": { "type": "string", "description": "Drafting / recommending department" },
+        "soVanBanTrinh": { "type": "string", "description": "The proposal document reference number" },
+        "ngayTrinh": { "type": "string", "format": "date", "description": "The proposal date" },
+        "linhVuc": { "type": "string", "enum": ["linh_vuc_1", "linh_vuc_2", "linh_vuc_3"], "description": "The administrative domain category of the document" },
+        "isQuyTrinhNoiBo": { "type": "boolean", "description": "Indicates if categorized under internal workflows" },
+        "ghiChu": { "type": "string", "description": "Optional notes accompanying the document" },
+        "ownerId": { "type": "string", "description": "The uid of the expert user who created this document" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the record was synchronized" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "When the record was last changed" }
+      },
+      "required": ["id", "loaiVanBan", "soBanHanh", "trichYeu", "ngayBanHanh", "ngayCoHieuLuc", "donViBanHanh", "donViThamMuu", "soVanBanTrinh", "ngayTrinh", "linhVuc", "ownerId", "createdAt", "updatedAt"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile in the administrative portal",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "User UID from Firebase Auth" },
+        "email": { "type": "string", "description": "Verified email of the user" },
+        "displayName": { "type": "string", "description": "Human name of the staff member" },
+        "photoURL": { "type": "string", "description": "Profile picture URL" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the profile was created" }
+      },
+      "required": ["uid", "email", "displayName", "createdAt"]
+    }
+  },
+  "firestore": {
+    "documents/{documentId}": {
+      "schema": "Document",
+      "description": "Stores administrative and legal decision documents"
+    },
+    "users/{userId}": {
+      "schema": "User",
+      "description": "Stores user profiles"
+    }
+  }
+}
