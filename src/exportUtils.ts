@@ -25,13 +25,18 @@ export function exportToCSV(documents: DocumentItem[], title: string) {
     "Ngày trình",
     "Lĩnh vực",
     "Mục con",
-    "Ghi chú"
+    "Ghi chú",
+    "File đính kèm"
   ];
 
   // Chuyển đổi dòng dữ liệu
   const rows = documents.map((doc, index) => {
     const linhVucText = LINH_VUC_LABELS[doc.linhVuc] || "";
     const mucConText = doc.isQuyTrinhNoiBo ? "Quyết định quy trình nội bộ" : "-";
+    
+    const fileKemText = doc.fileDinhKem && doc.fileDinhKem.length > 0
+      ? doc.fileDinhKem.map(f => `${f.name} (${f.url})`).join(" | ")
+      : "";
     
     const fields = [
       String(index + 1),
@@ -46,7 +51,8 @@ export function exportToCSV(documents: DocumentItem[], title: string) {
       formatYMDtoDMY(doc.ngayTrinh),
       linhVucText,
       mucConText,
-      doc.ghiChu || ""
+      doc.ghiChu || "",
+      fileKemText
     ];
 
     // Đóng gói từng trường trong dấu ngoặc kép, thay thế tab và dấu xuống dòng bằng khoảng trắng

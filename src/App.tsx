@@ -27,7 +27,8 @@ import {
   FolderOpen,
   AppWindow,
   Briefcase,
-  FileSpreadsheet
+  FileSpreadsheet,
+  ExternalLink
 } from "lucide-react";
 
 // Firebase Applet Integration Configuration
@@ -145,18 +146,12 @@ export default function App() {
     }
   };
 
-  // Synchronize documents data (Real-time connection listener)
+  // Synchronize documents data (Real-time connection listener - ALWAYS use Shared system-wide database)
   useEffect(() => {
-    if (!user) {
-      setDocuments(loadDocuments());
-      return;
-    }
-
     setLoading(true);
-    const q = query(
-      collection(db, "documents"),
-      where("ownerId", "==", user.uid)
-    );
+    
+    // Luôn luôn kết nối trực tiếp đến toàn bộ tài liệu dùng chung trên hệ thống đám mây
+    const q = query(collection(db, "documents"));
 
     const unsubscribe = onSnapshot(
       q,
@@ -165,7 +160,9 @@ export default function App() {
         snapshot.forEach((docSnap) => {
           // Tự động dọn dẹp các tài liệu mẫu cũ từ Firestore nếu còn tồn tại
           if (/^doc-00\d$/.test(docSnap.id) || docSnap.id === "doc-010") {
-            deleteDoc(doc(db, "documents", docSnap.id)).catch(() => {});
+            if (auth.currentUser) {
+              deleteDoc(doc(db, "documents", docSnap.id)).catch(() => {});
+            }
             return;
           }
           const data = docSnap.data();
@@ -183,21 +180,25 @@ export default function App() {
             linhVuc: data.linhVuc,
             isQuyTrinhNoiBo: data.isQuyTrinhNoiBo,
             ghiChu: data.ghiChu,
+            fileDinhKem: data.fileDinhKem || [],
             createdAt: data.createdAt,
+            ownerId: data.ownerId || "",
           } as DocumentItem);
         });
 
         setDocuments(docsList);
         setLoading(false);
 
-        // Seeding standard data when collection is pristine
-        if (snapshot.empty) {
-          seedDefaultDocuments(user.uid);
+        // Seeding standard data when collection is pristine (Chỉ seed nếu đã đăng nhập)
+        if (snapshot.empty && auth.currentUser) {
+          seedDefaultDocuments(auth.currentUser.uid);
         }
       },
       (error) => {
         setLoading(false);
-        handleFirestoreError(error, OperationType.LIST, "documents");
+        console.warn("Firestore listener warning (guest or offline modes):", error);
+        // Fallback to local offline cache
+        setDocuments(loadDocuments());
       }
     );
 
@@ -213,7 +214,7 @@ export default function App() {
   // Thao tác 1: Lưu (Thêm mới hoặc Cập nhật)
   const handleSaveDocument = async (savedDoc: DocumentItem) => {
     if (!user) {
-      // Offline fallback LocalStorage logic
+      // Offline fallback LocalStorage logic nếu chưa đăng nhập
       const isEditing = documents.some((doc) => doc.id === savedDoc.id);
       let updatedDocs: DocumentItem[];
       if (isEditing) {
@@ -235,6 +236,7 @@ export default function App() {
       if (isEditing) {
         const origDoc = documents.find((doc) => doc.id === savedDoc.id);
         const origCreatedAt = origDoc?.createdAt || serverTimestamp();
+        const origOwnerId = origDoc?.ownerId || user.uid; // Bảo lưu ownerId chính gốc của văn bản
         await setDoc(docRef, {
           id: savedDoc.id,
           loaiVanBan: savedDoc.loaiVanBan,
@@ -249,7 +251,8 @@ export default function App() {
           linhVuc: savedDoc.linhVuc,
           isQuyTrinhNoiBo: savedDoc.isQuyTrinhNoiBo ?? false,
           ghiChu: savedDoc.ghiChu ?? "",
-          ownerId: user.uid,
+          fileDinhKem: savedDoc.fileDinhKem || [],
+          ownerId: origOwnerId,
           createdAt: origCreatedAt,
           updatedAt: serverTimestamp(),
         });
@@ -268,6 +271,7 @@ export default function App() {
           linhVuc: savedDoc.linhVuc,
           isQuyTrinhNoiBo: savedDoc.isQuyTrinhNoiBo ?? false,
           ghiChu: savedDoc.ghiChu ?? "",
+          fileDinhKem: savedDoc.fileDinhKem || [],
           ownerId: user.uid,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -586,6 +590,56 @@ export default function App() {
             </button>
           </div>
 
+          {/* LIÊN KẾT WEBSITE */}
+          <div className="space-y-1 border-t border-slate-800/60 pt-4">
+            <span className="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-2">
+              Liên kết Website
+            </span>
+            <div className="space-y-1">
+              <a
+                href="https://stvb-two.vercel.app/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full flex items-center justify-between px-3 py-1.5 text-slate-400 hover:text-white hover:bg-slate-800/60 text-xs font-semibold rounded-xl text-left transition-colors cursor-pointer group"
+                title="Trợ lý AI soạn thảo văn bản"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-purple-400 shrink-0 select-none">✨</span>
+                  <span className="truncate">1. Trợ lý AI soạn thảo văn bản</span>
+                </div>
+                <ExternalLink size={10} className="text-slate-600 group-hover:text-slate-400 shrink-0 transition-colors" />
+              </a>
+
+              <a
+                href="https://lamdong.gov.vn/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full flex items-center justify-between px-3 py-1.5 text-slate-400 hover:text-white hover:bg-slate-800/60 text-xs font-semibold rounded-xl text-left transition-colors cursor-pointer group"
+                title="Trang Thông tin điện tử Sở Công Thương"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-emerald-400 shrink-0 select-none">🌐</span>
+                  <span className="truncate">2. Trang TTĐT Sở Công Thương</span>
+                </div>
+                <ExternalLink size={10} className="text-slate-600 group-hover:text-slate-400 shrink-0 transition-colors" />
+              </a>
+
+              <a
+                href="https://qlvb.lamdong.gov.vn/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full flex items-center justify-between px-3 py-1.5 text-slate-400 hover:text-white hover:bg-slate-800/60 text-xs font-semibold rounded-xl text-left transition-colors cursor-pointer group"
+                title="Hệ thống Quản lý văn bản và điều hành"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-blue-400 shrink-0 select-none">📂</span>
+                  <span className="truncate">3. Hệ thống QLVB và điều hành</span>
+                </div>
+                <ExternalLink size={10} className="text-slate-600 group-hover:text-slate-400 shrink-0 transition-colors" />
+              </a>
+            </div>
+          </div>
+
           {/* DỮ LIỆU LIÊN QUAN */}
           <div className="space-y-1 border-t border-slate-800/60 pt-4">
             <span className="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1">
@@ -600,6 +654,8 @@ export default function App() {
               <span>Xóa sạch dữ liệu</span>
             </button>
           </div>
+
+          
         </nav>
 
         {/* PROFILE ZONE - INTEGRATED GOOGLE AUTH */}

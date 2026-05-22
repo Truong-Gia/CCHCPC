@@ -37,7 +37,7 @@ service cloud.firestore {
         'donViBanHanh', 'donViThamMuu', 'soVanBanTrinh', 'ngayTrinh', 
         'linhVuc', 'ownerId', 'createdAt', 'updatedAt'
       ])
-      && data.keys().size() <= 16
+      && data.keys().size() <= 18
       && data.id is string && data.id.size() >= 1 && data.id.size() <= 128
       && data.loaiVanBan is string && (data.loaiVanBan == 'Nghị quyết' || data.loaiVanBan == 'Quyết định')
       && data.soBanHanh is string && data.soBanHanh.size() >= 0 && data.soBanHanh.size() <= 200
@@ -51,7 +51,8 @@ service cloud.firestore {
       && data.linhVuc is string && (data.linhVuc == 'linh_vuc_1' || data.linhVuc == 'linh_vuc_2' || data.linhVuc == 'linh_vuc_3')
       && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
       && (data.get('isQuyTrinhNoiBo', false) is bool)
-      && (data.get('ghiChu', '') is string && data.get('ghiChu', '').size() <= 2000);
+      && (data.get('ghiChu', '') is string && data.get('ghiChu', '').size() <= 2000)
+      && (data.get('fileDinhKem', []) is list);
     }
 
     // Validate user profile shape (Pillar 6 - Privileged info separation)
@@ -83,17 +84,13 @@ service cloud.firestore {
 
     // Collection: regulatory documents (Pillar 8 - No query trust, explicit checks)
     match /documents/{documentId} {
-      // Path Hardening
-      allow get: if isSignedIn() && isValidId(documentId);
-      
-      // Zero-Trust Enforcer: explicit ownership query bounds checks
-      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      // Allow any visitor to view documents (both single document and listings)
+      allow read: if true;
 
       allow create: if isVerifiedUser() 
         && isValidId(documentId) 
         && isValidDocument(incoming())
         && incoming().id == documentId
-        && incoming().ownerId == request.auth.uid
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
 
@@ -101,13 +98,11 @@ service cloud.firestore {
         && isValidId(documentId)
         && isValidDocument(incoming())
         && incoming().id == existing().id
-        && incoming().ownerId == existing().ownerId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time;
 
       allow delete: if isVerifiedUser()
-        && isValidId(documentId)
-        && existing().ownerId == request.auth.uid;
+        && isValidId(documentId);
     }
   }
 }

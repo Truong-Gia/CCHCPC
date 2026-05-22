@@ -24,7 +24,9 @@ export interface DocumentItem {
   // có quy định thư mục con: "Quyết định quy trình nội bộ"
   isQuyTrinhNoiBo?: boolean; 
   ghiChu?: string;
+  fileDinhKem?: { name: string; url: string; size?: number; type?: string }[];
   createdAt?: any;
+  ownerId?: string;
 }
 
 /**

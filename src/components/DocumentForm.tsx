@@ -4,8 +4,10 @@
  */
 
 import React, { useState, useEffect } from "react";
-import { DocumentItem, LoaiVanBan, DonViBanHanh, LinhVucType, INSTANCE_PARTIES, formatYMDtoDMY, parseDMYtoYMD, isValidDMY } from "../types";
-import { X, Save, Eye, RotateCcw, AlertCircle } from "lucide-react";
+import { DocumentItem, LoaiVanBan, DonViBanHanh, LinhVucType, INSTANCE_PARTIES, formatYMDtoDMY, parseDMYtoYMD } from "../types";
+import { X, Save, RotateCcw, AlertCircle, UploadCloud } from "lucide-react";
+import { storage, auth } from "../firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 interface DocumentFormProps {
   documentToEdit: DocumentItem | null;
@@ -36,6 +38,11 @@ export default function DocumentForm({
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Trạng thái đính kèm file
+  const [files, setFiles] = useState<{ name: string; url: string; size?: number; type?: string }[]>([]);
+  const [uploadingFiles, setUploadingFiles] = useState<{ name: string; progress: number }[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+
   // Đổ dữ liệu nếu đang ở chế độ Sửa
   useEffect(() => {
     if (documentToEdit) {
@@ -51,6 +58,7 @@ export default function DocumentForm({
       setLinhVuc(documentToEdit.linhVuc);
       setIsQuyTrinhNoiBo(!!documentToEdit.isQuyTrinhNoiBo);
       setGhiChu(documentToEdit.ghiChu || "");
+      setFiles(documentToEdit.fileDinhKem || []);
     } else {
       // Nếu thêm mới và đang đứng ở Lĩnh vực cụ thể, mặc định chọn lĩnh vực đó
       if (currentActiveLinhVuc !== "all") {
@@ -82,12 +90,129 @@ export default function DocumentForm({
     setNgayTrinh("");
     setIsQuyTrinhNoiBo(false);
     setGhiChu("");
+    setFiles([]);
+    setUploadingFiles([]);
+    setIsUploading(false);
     setErrorMsg(null);
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    
+    const selectedFiles = Array.from(e.target.files) as File[];
+    
+    // Validate file formats: pdf, doc, docx
+    const allowedExtensions = ["pdf", "doc", "docx"];
+    const invalidFiles = selectedFiles.filter(file => {
+      const ext = file.name.split(".").pop()?.toLowerCase() || "";
+      return !allowedExtensions.includes(ext);
+    });
+    
+    if (invalidFiles.length > 0) {
+      setErrorMsg(`Định dạng file không hợp lệ! Chỉ cho phép file .pdf, .doc, .docx (Phát hiện file không đúng: ${invalidFiles.map(f => f.name).join(", ")})`);
+      return;
+    }
+    
+    setIsUploading(true);
+    setErrorMsg(null);
+    
+    const docId = documentToEdit?.id || `doc-draft-${Date.now()}`;
+    const uploadedList = [...files];
+    
+    for (const file of selectedFiles) {
+      // Add to uploading progress tracking
+      setUploadingFiles((prev) => [...prev, { name: file.name, progress: 10 }]);
+      
+      try {
+        // TIER 1: Firebase Cloud Storage with strict timeout
+        const fileRef = ref(storage, `documents/${docId}/${Date.now()}_${file.name}`);
+        
+        const uploadToFirebase = (async () => {
+          const snapshot = await uploadBytes(fileRef, file);
+          return await getDownloadURL(snapshot.ref);
+        })();
+
+        const timeoutPromise = new Promise<string>((_, reject) => 
+          setTimeout(() => reject(new Error("Firebase upload timeout")), 30000)
+        );
+
+        let downloadUrl = "";
+        try {
+          downloadUrl = await Promise.race([uploadToFirebase, timeoutPromise]);
+        } catch (firebaseError: any) {
+          console.warn("Firebase Storage is unreachable or timed out. Falling back to high-speed file storage proxy...", firebaseError);
+          
+          // TIER 2: Fast anonymous direct-cloud public API (tmpfiles.org with download url rewrite)
+          const formData = new FormData();
+          formData.append("file", file);
+          
+          const res = await fetch("https://tmpfiles.org/api/v1/upload", {
+            method: "POST",
+            body: formData,
+          });
+          if (!res.ok) throw new Error("Public cloud upload failed with HTTP status " + res.status);
+          
+          const result = await res.json();
+          if (result && result.data && result.data.url) {
+            downloadUrl = result.data.url.replace("https://tmpfiles.org/", "https://tmpfiles.org/dl/");
+          } else {
+            throw new Error("Invalid response format from cloud storage proxy");
+          }
+        }
+
+        uploadedList.push({
+          name: file.name,
+          url: downloadUrl,
+          size: file.size,
+          type: file.type || "application/octet-stream",
+        });
+        
+        // Update files state
+        setFiles([...uploadedList]);
+        
+        // Clear this file from uploadingFiles list
+        setUploadingFiles((prev) => prev.filter((f) => f.name !== file.name));
+      } catch (error: any) {
+        console.error("Lỗi khi upload file lên cloud, khôi phục bằng base64: ", error);
+        
+        // TIER 3: Local Offline / Permissions Fallback (instant Base64 URI)
+        try {
+          const reader = new FileReader();
+          const base64Promise = new Promise<string>((resolve, reject) => {
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = (err) => reject(err);
+            reader.readAsDataURL(file);
+          });
+          
+          const base64Data = await base64Promise;
+          
+          uploadedList.push({
+            name: file.name,
+            url: base64Data, // local base64 fallback
+            size: file.size,
+            type: file.type || "application/octet-stream",
+          });
+          
+          setFiles([...uploadedList]);
+          setUploadingFiles((prev) => prev.filter((f) => f.name !== file.name));
+        } catch (fbError) {
+          setErrorMsg(`Không thể xử lý file ${file.name}: ${error.message || error}`);
+          setUploadingFiles((prev) => prev.filter((f) => f.name !== file.name));
+        }
+      }
+    }
+    
+    setIsUploading(false);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
+
+    if (isUploading) {
+      setErrorMsg("Vui lòng đợi quá trình upload file hoàn tất!");
+      return;
+    }
 
     // Xác thực cơ bản
     if (!soBanHanh.trim()) {
@@ -145,6 +270,7 @@ export default function DocumentForm({
       linhVuc,
       isQuyTrinhNoiBo: linhVuc === "linh_vuc_1" ? isQuyTrinhNoiBo : false,
       ghiChu: ghiChu.trim(),
+      fileDinhKem: files,
     };
 
     onSave(payload);
@@ -179,6 +305,16 @@ export default function DocumentForm({
             <div className="flex items-center gap-2.5 p-3.5 bg-rose-50 border-l-4 border-rose-600 text-rose-800 text-sm rounded-r-lg">
               <AlertCircle size={18} className="shrink-0" />
               <span>{errorMsg}</span>
+            </div>
+          )}
+
+          {!auth.currentUser && (
+            <div className="flex items-start gap-2.5 p-3.5 bg-amber-50 border-l-4 border-amber-500 text-amber-800 text-xs rounded-r-lg leading-relaxed font-semibold">
+              <AlertCircle size={16} className="shrink-0 text-amber-500 mt-0.5" />
+              <div>
+                <strong className="text-amber-950 font-bold block mb-0.5">⚠️ Đang hoạt động ở chế độ ngoại tuyến (Chưa đăng nhập)</strong>
+                Quyết định này hiện tại sẽ chỉ được lưu tạm thời trên trình duyệt của máy này. Để đồng bộ an toàn vĩnh viễn và chia sẻ dùng chung cho tất cả tài khoản, xin vui lòng bật Đăng nhập Google ở góc trái màn hình.
+              </div>
             </div>
           )}
 
@@ -410,6 +546,101 @@ export default function DocumentForm({
               placeholder="Nhập thông tin đính kèm bổ sung, nơi lưu trữ, hiệu lực liên đới..."
               className="w-full bg-white border border-slate-200 rounded-lg px-3.5 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
             />
+          </div>
+
+          {/* File đính kèm (Dòng cuối của form nhập liệu) */}
+          <div className="border-t border-slate-100 pt-4.5 space-y-3" id="form-file-dinh-kem-row">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wide text-slate-500">
+                  File đính kèm <span className="text-slate-400 font-normal lowercase">(Chấp nhận: .pdf, .doc, .docx)</span>
+                </label>
+                <div className="text-[11px] text-slate-400 mt-1 font-medium">
+                  Hiện có: <span className="font-bold text-blue-600 font-mono text-xs">{files.length}</span> file đính kèm.
+                </div>
+              </div>
+              
+              <label 
+                className={`relative flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-lg border transition-all cursor-pointer shadow-xs ${
+                  isUploading 
+                    ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed" 
+                    : "bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200"
+                }`}
+              >
+                <UploadCloud size={14} className={isUploading ? "animate-spin" : "animate-bounce"} />
+                <span>Chọn file tải lên</span>
+                <input
+                  type="file"
+                  multiple
+                  accept=".pdf,.doc,.docx"
+                  onChange={handleFileChange}
+                  className="hidden"
+                  disabled={isUploading}
+                />
+              </label>
+            </div>
+
+            {/* Danh sách các files đã đính kèm */}
+            {files.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                {files.map((file, idx) => {
+                  const ext = file.name.split(".").pop()?.toLowerCase() || "";
+                  const sizeKB = file.size ? Math.round(file.size / 1024) : 0;
+                  return (
+                    <div 
+                      key={idx}
+                      className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-lg group hover:border-blue-300 hover:shadow-xs transition-colors"
+                    >
+                      <div className="flex items-center gap-2 overflow-hidden mr-2">
+                        <span className="text-base shrink-0 select-none">
+                          {ext === "pdf" ? "📕" : "📘"}
+                        </span>
+                        <div className="truncate text-xs font-semibold text-slate-700">
+                          <a 
+                            href={file.url} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            className="hover:text-blue-600 hover:underline cursor-pointer"
+                            title="Nhấp để tải hoặc xem tệp tin"
+                          >
+                            {file.name}
+                          </a>
+                          {sizeKB > 0 && (
+                            <span className="text-[10px] text-slate-400 font-mono font-medium block">
+                              {sizeKB} KB
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setFiles(files.filter((_, i) => i !== idx))}
+                        className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors opacity-100 sm:opacity-0 group-hover:opacity-100 cursor-pointer"
+                        title="Xóa tệp đính kèm này"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Hàng chờ các file đang upload */}
+            {uploadingFiles.length > 0 && (
+              <div className="space-y-2 bg-amber-50/60 p-3 rounded-xl border border-amber-200 text-xs text-amber-800">
+                <div className="font-semibold flex items-center gap-1.5">
+                  <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                  Hệ thống đang tải file lên cơ sở dữ liệu đám mây (Cloud)...
+                </div>
+                {uploadingFiles.map((file, i) => (
+                  <div key={i} className="flex justify-between font-medium font-mono text-[10px]">
+                    <span className="truncate max-w-[80%]">{file.name}</span>
+                    <span className="animate-pulse shrink-0">Đang khởi tạo...</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Nút hành động */}

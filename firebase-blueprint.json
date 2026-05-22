@@ -18,6 +18,7 @@
         "linhVuc": { "type": "string", "enum": ["linh_vuc_1", "linh_vuc_2", "linh_vuc_3"], "description": "The administrative domain category of the document" },
         "isQuyTrinhNoiBo": { "type": "boolean", "description": "Indicates if categorized under internal workflows" },
         "ghiChu": { "type": "string", "description": "Optional notes accompanying the document" },
+        "fileDinhKem": { "type": "array", "description": "List of attached file objects containing name and URL" },
         "ownerId": { "type": "string", "description": "The uid of the expert user who created this document" },
         "createdAt": { "type": "string", "format": "date-time", "description": "When the record was synchronized" },
         "updatedAt": { "type": "string", "format": "date-time", "description": "When the record was last changed" }
