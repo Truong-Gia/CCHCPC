@@ -4,12 +4,10 @@
  */
 
 import React, { useState, useEffect, useMemo } from "react";
-import { DocumentItem, LinhVucType, LINH_VUC_LABELS, UserProfile } from "./types";
+import { DocumentItem, LinhVucType, LINH_VUC_LABELS } from "./types";
 import { loadDocuments, saveDocuments, INITIAL_DOCUMENTS } from "./mockData";
 import DocumentForm from "./components/DocumentForm";
 import DocumentTable from "./components/DocumentTable";
-import LoginForm from "./components/LoginForm";
-import { canCreateDocument, canEditDocument, canDeleteDocument } from "./roles";
 import { 
   Plus, 
   HelpCircle, 
@@ -78,12 +76,10 @@ export default function App() {
   // Trạng thái toggle Sidebar trên thiết bị di động
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
-  // Firebase Auth and Database synchronizations status state
-  const [authUser, setAuthUser] = useState<User | null>(null);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  // Loading state for async operations
   const [loading, setLoading] = useState(false);
   
-  // Guest session ID for anonymous users to enable data sharing
+  // Guest session ID for tracking document ownership
   const [guestSessionId] = useState(() => {
     const stored = localStorage.getItem("guestSessionId");
     if (stored) return stored;
@@ -91,203 +87,6 @@ export default function App() {
     localStorage.setItem("guestSessionId", newId);
     return newId;
   });
-
-  // Listen to Auth State
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setAuthUser(currentUser);
-      if (currentUser) {
-        // Fetch user profile with role from Firestore
-        const userRef = doc(db, "users", currentUser.uid);
-        const unsubscribeProfile = onSnapshot(userRef, (docSnap) => {
-          if (docSnap.exists()) {
-            setUserProfile(docSnap.data() as UserProfile);
-          } else {
-            // Create default user profile for new users
-            const defaultProfile: UserProfile = {
-              uid: currentUser.uid,
-              email: currentUser.email || "",
-              displayName: currentUser.displayName || "Cán bộ",
-              role: "viewer", // Default role for new users
-              isActive: true,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            };
-            setDoc(userRef, defaultProfile, { merge: true })
-              .then(() => setUserProfile(defaultProfile))
-              .catch((err) => console.error("[v0] Failed to create user profile:", err));
-          }
-        });
-        return () => unsubscribeProfile();
-      } else {
-        setUserProfile(null);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // Email/Password Sign In
-  const handleEmailSignIn = async (email: string, password: string) => {
-    try {
-      setLoading(true);
-      setErrorMessage(null);
-      await signInWithEmailAndPassword(auth, email, password);
-      console.log("[v0] Email sign-in successful:", email);
-    } catch (err) {
-      console.error("[v0] Sign in failed:", err);
-      let errorMessage = "Đăng nhập thất bại";
-      
-      if (err instanceof Error) {
-        const errorCode = (err as any).code;
-        console.log("[v0] Error code:", errorCode);
-        
-        if (errorCode === "auth/operation-not-allowed") {
-          errorMessage = "Email/mật khẩu chưa được bật trong Firebase Console. Vui lòng bật tính năng này trong Authentication settings.";
-        } else if (errorCode === "auth/user-not-found") {
-          errorMessage = "Email không được tìm thấy. Vui lòng tạo tài khoản trước.";
-        } else if (errorCode === "auth/wrong-password") {
-          errorMessage = "Mật khẩu không chính xác.";
-        } else if (errorCode === "auth/invalid-email") {
-          errorMessage = "Email không hợp lệ.";
-        } else {
-          errorMessage = "Lỗi: " + err.message;
-        }
-      }
-      
-      setErrorMessage(errorMessage);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Email/Password Sign Up
-  const handleEmailSignUp = async (email: string, password: string, displayName: string) => {
-    try {
-      setLoading(true);
-      setErrorMessage(null);
-      const result = await createUserWithEmailAndPassword(auth, email, password);
-      
-      // Update profile with display name
-      await updateProfile(result.user, { displayName });
-      
-      console.log("[v0] Sign up successful:", email);
-    } catch (err) {
-      console.error("[v0] Sign up failed:", err);
-      let errorMessage = "Tạo tài khoản thất bại";
-      
-      if (err instanceof Error) {
-        const errorCode = (err as any).code;
-        console.log("[v0] Error code:", errorCode);
-        
-        if (errorCode === "auth/operation-not-allowed") {
-          errorMessage = "Email/mật khẩu chưa được bật trong Firebase Console. Vui lòng vào Authentication → Sign-in method → bật Email/Password.";
-        } else if (errorCode === "auth/email-already-in-use") {
-          errorMessage = "Email này đã được đăng ký.";
-        } else if (errorCode === "auth/weak-password") {
-          errorMessage = "Mật khẩu quá yếu. Vui lòng sử dụng mật khẩu mạnh hơn (ít nhất 6 ký tự).";
-        } else if (errorCode === "auth/invalid-email") {
-          errorMessage = "Email không hợp lệ.";
-        } else {
-          errorMessage = "Lỗi: " + err.message;
-        }
-      }
-      
-      setErrorMessage(errorMessage);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Sign out handler
-  const handleSignOut = async () => {
-    try {
-      setLoading(true);
-      await signOut(auth);
-    } catch (err) {
-      console.error("Sign out failed: ", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Seeding Default Documents
-  const seedDefaultDocuments = async (uid: string) => {
-    try {
-      setLoading(true);
-      for (const docItem of INITIAL_DOCUMENTS) {
-        const docRef = doc(db, "documents", docItem.id);
-        await setDoc(docRef, {
-          ...docItem,
-          ownerId: uid,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      }
-    } catch (err) {
-      console.error("Auto seeding default data failed", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Synchronize documents data (Real-time connection listener - ALWAYS use Shared system-wide database)
-  useEffect(() => {
-    setLoading(true);
-    
-    // Luôn luôn kết nối trực tiếp đến toàn bộ tài liệu dùng chung trên hệ thống đám mây
-    const q = query(collection(db, "documents"));
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const docsList: DocumentItem[] = [];
-        snapshot.forEach((docSnap) => {
-          // Tự động dọn dẹp các tài liệu mẫu cũ từ Firestore nếu còn tồn tại
-          if (/^doc-00\d$/.test(docSnap.id) || docSnap.id === "doc-010") {
-            if (auth.currentUser) {
-              deleteDoc(doc(db, "documents", docSnap.id)).catch(() => {});
-            }
-            return;
-          }
-          const data = docSnap.data();
-          docsList.push({
-            id: docSnap.id,
-            loaiVanBan: data.loaiVanBan,
-            soBanHanh: data.soBanHanh || "",
-            trichYeu: data.trichYeu,
-            ngayBanHanh: data.ngayBanHanh,
-            ngayCoHieuLuc: data.ngayCoHieuLuc,
-            donViBanHanh: data.donViBanHanh,
-            donViThamMuu: data.donViThamMuu,
-            soVanBanTrinh: data.soVanBanTrinh,
-            ngayTrinh: data.ngayTrinh,
-            linhVuc: data.linhVuc,
-            isQuyTrinhNoiBo: data.isQuyTrinhNoiBo,
-            ghiChu: data.ghiChu,
-            fileDinhKem: data.fileDinhKem || [],
-            createdAt: data.createdAt,
-            ownerId: data.ownerId || "",
-          } as DocumentItem);
-        });
-
-        setDocuments(docsList);
-        setLoading(false);
-
-        // Seeding standard data when collection is pristine (Chỉ seed nếu đã đăng nhập)
-        if (snapshot.empty && auth.currentUser) {
-          seedDefaultDocuments(auth.currentUser.uid);
-        }
-      },
-      (error) => {
-        setLoading(false);
-        console.warn("Firestore listener warning (guest or offline modes):", error);
-        // Fallback to local offline cache
-        setDocuments(loadDocuments());
-      }
-    );
-
-    return () => unsubscribe();
-  }, [authUser]);
 
   // Offline status mutator State
   const updateDocumentsState = (newDocs: DocumentItem[]) => {
@@ -303,25 +102,8 @@ export default function App() {
       
       const isEditing = documents.some((doc) => doc.id === savedDoc.id);
       
-      // Check create permission for new documents
-      if (!isEditing && !canCreateDocument(userProfile)) {
-        setErrorMessage("Bạn không có quyền tạo văn bản mới. Vui lòng liên hệ với quản trị viên.");
-        setLoading(false);
-        return;
-      }
-      
-      // Check edit permission for existing documents
-      if (isEditing) {
-        const origDoc = documents.find((doc) => doc.id === savedDoc.id);
-        if (origDoc && !canEditDocument(userProfile, origDoc)) {
-          setErrorMessage("Bạn không có quyền chỉnh sửa văn bản này. Chỉ người tạo hoặc quản trị viên mới có thể chỉnh sửa.");
-          setLoading(false);
-          return;
-        }
-      }
-      
       const docRef = doc(db, "documents", savedDoc.id);
-      const ownerId = authUser?.uid || guestSessionId;
+      const ownerId = guestSessionId;
 
       if (isEditing) {
         const origDoc = documents.find((doc) => doc.id === savedDoc.id);
@@ -371,7 +153,7 @@ export default function App() {
 
       setIsFormOpen(false);
       setEditingDoc(null);
-      console.log("[v0] Document saved with ownerId:", ownerId, "Role:", userProfile?.role);
+      console.log("[v0] Document saved with ownerId:", ownerId);
     } catch (err) {
       console.error("[v0] Error saving document:", err);
       handleFirestoreError(err, isEditing ? OperationType.UPDATE : OperationType.CREATE, `documents/${savedDoc.id}`);
@@ -410,13 +192,6 @@ export default function App() {
       
       if (!docToDelete) {
         setErrorMessage("Không tìm thấy văn bản để xóa.");
-        setLoading(false);
-        return;
-      }
-      
-      // Check delete permission
-      if (!canDeleteDocument(userProfile, docToDelete)) {
-        setErrorMessage("Bạn không có quyền xóa văn bản này. Chỉ người tạo hoặc quản trị viên mới có thể xóa.");
         setLoading(false);
         return;
       }
@@ -514,19 +289,6 @@ export default function App() {
       expired,
     };
   }, [documents]);
-
-  // Show login form if user is not authenticated
-  if (!authUser) {
-    return (
-      <LoginForm
-        onSignIn={handleEmailSignIn}
-        onSignUp={handleEmailSignUp}
-        isLoading={loading}
-        externalError={errorMessage}
-        onClearError={() => setErrorMessage(null)}
-      />
-    );
-  }
 
   return (
     <div className="h-screen flex flex-col lg:flex-row overflow-hidden bg-slate-50 text-slate-900 font-sans">
