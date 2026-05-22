@@ -105,10 +105,35 @@ export default function App() {
     try {
       setLoading(true);
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      // Set custom scopes for Google profile access
+      provider.setCustomParameters({ prompt: "select_account" });
+      provider.addScopes(["profile", "email"]);
+      const result = await signInWithPopup(auth, provider);
+      console.log("[v0] Google Sign-In successful:", result.user.email);
     } catch (err) {
-      console.error("Sign in failed: ", err);
-      alert("Đăng nhập thất bại: " + (err instanceof Error ? err.message : String(err)));
+      console.error("[v0] Sign in failed: ", err);
+      let errorMessage = "Đăng nhập Google thất bại.";
+      
+      if (err instanceof Error) {
+        const errorCode = (err as any).code;
+        console.log("[v0] Error code:", errorCode);
+        
+        if (errorCode === "auth/popup-closed-by-user") {
+          errorMessage = "Bạn đã đóng cửa sổ đăng nhập. Vui lòng thử lại.";
+        } else if (errorCode === "auth/popup-blocked") {
+          errorMessage = "Trình duyệt của bạn đã chặn cửa sổ đăng nhập. Vui lòng cho phép cửa sổ pop-up và thử lại.";
+        } else if (errorCode === "auth/operation-not-supported-in-this-environment") {
+          errorMessage = "Tính năng đăng nhập này không được hỗ trợ trong môi trường hiện tại. Vui lòng sử dụng trình duyệt khác.";
+        } else if (errorCode === "auth/unauthorized-domain") {
+          errorMessage = "Domain này chưa được phép sử dụng Google Sign-In. Vui lòng thêm domain vào Firebase Console.";
+        } else if (err.message.includes("Cannot read property") || err.message.includes("is not a function")) {
+          errorMessage = "Lỗi cấu hình Firebase. Vui lòng kiểm tra cài đặt Google OAuth trong Firebase Console.";
+        } else {
+          errorMessage = "Đăng nhập Google thất bại: " + err.message;
+        }
+      }
+      
+      alert(errorMessage);
     } finally {
       setLoading(false);
     }
