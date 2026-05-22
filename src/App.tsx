@@ -4,10 +4,12 @@
  */
 
 import React, { useState, useEffect, useMemo } from "react";
-import { DocumentItem, LinhVucType, LINH_VUC_LABELS } from "./types";
+import { DocumentItem, LinhVucType, LINH_VUC_LABELS, UserProfile } from "./types";
 import { loadDocuments, saveDocuments, INITIAL_DOCUMENTS } from "./mockData";
 import DocumentForm from "./components/DocumentForm";
 import DocumentTable from "./components/DocumentTable";
+import LoginForm from "./components/LoginForm";
+import { canCreateDocument, canEditDocument, canDeleteDocument } from "./roles";
 import { 
   Plus, 
   HelpCircle, 
@@ -34,8 +36,9 @@ import {
 // Firebase Applet Integration Configuration
 import { db, auth, handleFirestoreError, OperationType } from "./firebase";
 import { 
-  signInWithPopup, 
-  GoogleAuthProvider, 
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
   signOut, 
   onAuthStateChanged,
   User 
@@ -76,7 +79,8 @@ export default function App() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // Firebase Auth and Database synchronizations status state
-  const [user, setUser] = useState<User | null>(null);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(false);
   
   // Guest session ID for anonymous users to enable data sharing
@@ -91,58 +95,68 @@ export default function App() {
   // Listen to Auth State
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
+      setAuthUser(currentUser);
       if (currentUser) {
-        // Sync user profile in background
+        // Fetch user profile with role from Firestore
         const userRef = doc(db, "users", currentUser.uid);
-        setDoc(userRef, {
-          uid: currentUser.uid,
-          email: currentUser.email || "",
-          displayName: currentUser.displayName || "Cán bộ",
-          photoURL: currentUser.photoURL || "",
-          createdAt: serverTimestamp(),
-        }, { merge: true }).catch((err) => {
-          console.warn("User profile sync log: ", err);
+        const unsubscribeProfile = onSnapshot(userRef, (docSnap) => {
+          if (docSnap.exists()) {
+            setUserProfile(docSnap.data() as UserProfile);
+          } else {
+            // Create default user profile for new users
+            const defaultProfile: UserProfile = {
+              uid: currentUser.uid,
+              email: currentUser.email || "",
+              displayName: currentUser.displayName || "Cán bộ",
+              role: "viewer", // Default role for new users
+              isActive: true,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            };
+            setDoc(userRef, defaultProfile, { merge: true })
+              .then(() => setUserProfile(defaultProfile))
+              .catch((err) => console.error("[v0] Failed to create user profile:", err));
+          }
         });
+        return () => unsubscribeProfile();
+      } else {
+        setUserProfile(null);
       }
     });
     return () => unsubscribe();
   }, []);
 
-  // Google Provider Authentication
-  const handleGoogleSignIn = async () => {
+  // Email/Password Sign In
+  const handleEmailSignIn = async (email: string, password: string) => {
     try {
       setLoading(true);
-      const provider = new GoogleAuthProvider();
-      // Set custom scopes for Google profile access
-      provider.setCustomParameters({ prompt: "select_account" });
-      provider.addScopes(["profile", "email"]);
-      const result = await signInWithPopup(auth, provider);
-      console.log("[v0] Google Sign-In successful:", result.user.email);
+      setErrorMessage(null);
+      await signInWithEmailAndPassword(auth, email, password);
+      console.log("[v0] Email sign-in successful:", email);
     } catch (err) {
-      console.error("[v0] Sign in failed: ", err);
-      let errorMessage = "Đăng nhập Google thất bại.";
+      console.error("[v0] Sign in failed:", err);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setErrorMessage("Đăng nhập thất bại: " + errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Email/Password Sign Up
+  const handleEmailSignUp = async (email: string, password: string, displayName: string) => {
+    try {
+      setLoading(true);
+      setErrorMessage(null);
+      const result = await createUserWithEmailAndPassword(auth, email, password);
       
-      if (err instanceof Error) {
-        const errorCode = (err as any).code;
-        console.log("[v0] Error code:", errorCode);
-        
-        if (errorCode === "auth/popup-closed-by-user") {
-          errorMessage = "Bạn đã đóng cửa sổ đăng nhập. Vui lòng thử lại.";
-        } else if (errorCode === "auth/popup-blocked") {
-          errorMessage = "Trình duyệt của bạn đã chặn cửa sổ đăng nhập. Vui lòng cho phép cửa sổ pop-up và thử lại.";
-        } else if (errorCode === "auth/operation-not-supported-in-this-environment") {
-          errorMessage = "Tính năng đăng nhập này không được hỗ trợ trong môi trường hiện tại. Vui lòng sử dụng trình duyệt khác.";
-        } else if (errorCode === "auth/unauthorized-domain") {
-          errorMessage = "Domain này chưa được phép sử dụng Google Sign-In. Vui lòng thêm domain vào Firebase Console.";
-        } else if (err.message.includes("Cannot read property") || err.message.includes("is not a function")) {
-          errorMessage = "Lỗi cấu hình Firebase. Vui lòng kiểm tra cài đặt Google OAuth trong Firebase Console.";
-        } else {
-          errorMessage = "Đăng nhập Google thất bại: " + err.message;
-        }
-      }
+      // Update profile with display name
+      await updateProfile(result.user, { displayName });
       
-      alert(errorMessage);
+      console.log("[v0] Sign up successful:", email);
+    } catch (err) {
+      console.error("[v0] Sign up failed:", err);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setErrorMessage("Tạo tài khoản thất bại: " + errorMessage);
     } finally {
       setLoading(false);
     }
@@ -237,7 +251,7 @@ export default function App() {
     );
 
     return () => unsubscribe();
-  }, [user]);
+  }, [authUser]);
 
   // Offline status mutator State
   const updateDocumentsState = (newDocs: DocumentItem[]) => {
@@ -249,11 +263,29 @@ export default function App() {
   const handleSaveDocument = async (savedDoc: DocumentItem) => {
     try {
       setLoading(true);
-      const isEditing = documents.some((doc) => doc.id === savedDoc.id);
-      const docRef = doc(db, "documents", savedDoc.id);
+      setErrorMessage(null);
       
-      // Determine owner ID: user.uid if logged in, otherwise use guest session ID
-      const ownerId = user?.uid || guestSessionId;
+      const isEditing = documents.some((doc) => doc.id === savedDoc.id);
+      
+      // Check create permission for new documents
+      if (!isEditing && !canCreateDocument(userProfile)) {
+        setErrorMessage("Bạn không có quyền tạo văn bản mới. Vui lòng liên hệ với quản trị viên.");
+        setLoading(false);
+        return;
+      }
+      
+      // Check edit permission for existing documents
+      if (isEditing) {
+        const origDoc = documents.find((doc) => doc.id === savedDoc.id);
+        if (origDoc && !canEditDocument(userProfile, origDoc)) {
+          setErrorMessage("Bạn không có quyền chỉnh sửa văn bản này. Chỉ người tạo hoặc quản trị viên mới có thể chỉnh sửa.");
+          setLoading(false);
+          return;
+        }
+      }
+      
+      const docRef = doc(db, "documents", savedDoc.id);
+      const ownerId = authUser?.uid || guestSessionId;
 
       if (isEditing) {
         const origDoc = documents.find((doc) => doc.id === savedDoc.id);
@@ -303,10 +335,10 @@ export default function App() {
 
       setIsFormOpen(false);
       setEditingDoc(null);
-      console.log("[v0] Document saved with ownerId:", ownerId);
+      console.log("[v0] Document saved with ownerId:", ownerId, "Role:", userProfile?.role);
     } catch (err) {
       console.error("[v0] Error saving document:", err);
-      handleFirestoreError(err, savedDoc.id ? OperationType.UPDATE : OperationType.CREATE, `documents/${savedDoc.id}`);
+      handleFirestoreError(err, isEditing ? OperationType.UPDATE : OperationType.CREATE, `documents/${savedDoc.id}`);
     } finally {
       setLoading(false);
     }
@@ -338,12 +370,17 @@ export default function App() {
       setLoading(true);
       setErrorMessage(null);
       
-      // Check if user owns the document
       const docToDelete = documents.find((doc) => doc.id === id);
-      const ownerId = user?.uid || guestSessionId;
       
-      if (docToDelete && docToDelete.ownerId !== ownerId) {
-        setErrorMessage("Bạn không có quyền xóa văn bản này. Chỉ người tạo văn bản mới có thể xóa.");
+      if (!docToDelete) {
+        setErrorMessage("Không tìm thấy văn bản để xóa.");
+        setLoading(false);
+        return;
+      }
+      
+      // Check delete permission
+      if (!canDeleteDocument(userProfile, docToDelete)) {
+        setErrorMessage("Bạn không có quyền xóa văn bản này. Chỉ người tạo hoặc quản trị viên mới có thể xóa.");
         setLoading(false);
         return;
       }
@@ -378,7 +415,7 @@ export default function App() {
     setShowResetConfirm(false);
     setErrorMessage(null);
 
-    if (!user) {
+    if (!authUser) {
       updateDocumentsState(INITIAL_DOCUMENTS);
       setActiveTab("all");
       setSubFolderFilter(undefined);
@@ -392,7 +429,7 @@ export default function App() {
         await deleteDoc(doc(db, "documents", d.id));
       }
       // Nạp lại danh sách (đã bị làm trống)
-      await seedDefaultDocuments(user.uid);
+      await seedDefaultDocuments(authUser.uid);
       setActiveTab("all");
       setSubFolderFilter(undefined);
     } catch (err) {
@@ -441,6 +478,17 @@ export default function App() {
       expired,
     };
   }, [documents]);
+
+  // Show login form if user is not authenticated
+  if (!authUser) {
+    return (
+      <LoginForm
+        onSignIn={handleEmailSignIn}
+        onSignUp={handleEmailSignUp}
+        isLoading={loading}
+      />
+    );
+  }
 
   return (
     <div className="h-screen flex flex-col lg:flex-row overflow-hidden bg-slate-50 text-slate-900 font-sans">
@@ -689,23 +737,19 @@ export default function App() {
           
         </nav>
 
-        {/* PROFILE ZONE - INTEGRATED GOOGLE AUTH */}
+        {/* PROFILE ZONE - EMAIL/PASSWORD AUTH */}
         <div className="p-4 border-t border-slate-800 bg-slate-950/30">
-          {user ? (
+          {authUser && userProfile ? (
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5 min-w-0">
-                {user.photoURL ? (
-                  <img src={user.photoURL} alt={user.displayName || "User"} className="w-9 h-9 rounded-xl object-cover" referrerPolicy="no-referrer" />
-                ) : (
-                  <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-xs">
-                    {user.displayName?.substring(0, 2).toUpperCase() || "US"}
-                  </div>
-                )}
+                <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-xs">
+                  {userProfile.displayName?.substring(0, 2).toUpperCase() || "US"}
+                </div>
                 <div className="min-w-0">
-                  <p className="text-xs font-bold text-white truncate">{user.displayName || "Cán bộ"}</p>
+                  <p className="text-xs font-bold text-white truncate">{userProfile.displayName || "Cán bộ"}</p>
                   <p className="text-[10px] text-emerald-400 truncate mt-0.5 font-medium flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                    Đã xác thực
+                    {userProfile.role === "admin" ? "Quản trị viên" : userProfile.role === "staff" ? "Nhân viên" : "Xem"}
                   </p>
                 </div>
               </div>
@@ -718,14 +762,8 @@ export default function App() {
               </button>
             </div>
           ) : (
-            <div className="space-y-2">
-              <p className="text-[10px] text-slate-400 leading-normal mb-1.5">Cách chế trực tuyến: Nhập văn bản bảo lưu mượt mà trên Cloud.</p>
-              <button
-                onClick={handleGoogleSignIn}
-                className="w-full py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer uppercase active:scale-98"
-              >
-                Đăng nhập Google
-              </button>
+            <div className="text-[10px] text-slate-300 leading-normal">
+              <p className="mb-2">Đăng nhập để quản lý tài liệu trên Cloud</p>
             </div>
           )}
         </div>

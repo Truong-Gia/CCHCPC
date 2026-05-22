@@ -107,3 +107,18 @@ export const INSTANCE_PARTIES = [
   "Trung tâm Khuyến công",
   "Chi cục Quản lý thị trường"
 ];
+
+// User role types
+export type UserRole = "admin" | "staff" | "viewer";
+
+// User profile interface for Firestore users collection
+export interface UserProfile {
+  uid: string;
+  email: string;
+  displayName?: string;
+  role: UserRole;
+  department?: string;
+  isActive: boolean;
+  createdAt?: any;
+  updatedAt?: any;
+}

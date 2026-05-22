@@ -12,9 +12,26 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // MANDATORY Constraint: verify the user email is verified
-    function isVerifiedUser() {
-      return isSignedIn() && request.auth.token.email_verified == true;
+    // Get user profile from Firestore
+    function getUserProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Get user role
+    function getUserRole() {
+      let profile = getUserProfile();
+      return profile.get('role', 'viewer');
+    }
+
+    // Check if user is admin
+    function isAdmin() {
+      return isSignedIn() && getUserRole() == 'admin';
+    }
+
+    // Check if user is staff or admin
+    function isStaffOrAdmin() {
+      let role = getUserRole();
+      return isSignedIn() && (role == 'staff' || role == 'admin');
     }
 
     function incoming() {
@@ -55,28 +72,32 @@ service cloud.firestore {
       && (data.get('fileDinhKem', []) is list);
     }
 
-    // Validate user profile shape (Pillar 6 - Privileged info separation)
+    // Validate user profile shape (Pillar 6 - Privileged info separation, Role-based access)
     function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'email', 'displayName', 'createdAt'])
-      && data.keys().size() <= 6
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'isActive', 'createdAt'])
+      && data.keys().size() <= 8
       && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
       && data.email is string && data.email.size() >= 1 && data.email.size() <= 200
       && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 200
-      && (data.get('photoURL', '') is string && data.get('photoURL', '').size() <= 2000);
+      && data.role is string && (data.role == 'admin' || data.role == 'staff' || data.role == 'viewer')
+      && data.isActive is bool
+      && (data.get('department', '') is string && data.get('department', '').size() <= 200);
     }
 
     // Collection: user profiles (Strict PII isolation matching user identity)
     match /users/{userId} {
-      allow get: if isSignedIn() && request.auth.uid == userId;
-      // List/query block is restricted to self to prevent enumeration
-      allow list: if isSignedIn() && userId == request.auth.uid;
+      // Users can read their own profile, admins can read all
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      // List/query block is restricted to admins only for user management
+      allow list: if isAdmin();
       
       allow create: if isSignedIn() && request.auth.uid == userId 
         && isValidUser(incoming())
         && incoming().uid == request.auth.uid
         && incoming().createdAt == request.time;
         
-      allow update: if isSignedIn() && request.auth.uid == userId
+      // Users can update their own profile, admins can update any
+      allow update: if isSignedIn() && (request.auth.uid == userId || isAdmin())
         && isValidUser(incoming())
         && incoming().uid == existing().uid
         && incoming().createdAt == existing().createdAt;
@@ -87,32 +108,35 @@ service cloud.firestore {
       // Allow any visitor to view documents (both single document and listings)
       allow read: if true;
 
-      // Helper to check if user is owner (verified user or guest session)
-      function isOwner() {
-        return (isVerifiedUser() && incoming().ownerId == request.auth.uid) 
-            || (!isSignedIn() && incoming().ownerId is string && incoming().ownerId.matches('^guest-.*'));
+      // Helper to check if user is document owner
+      function isDocumentOwner(doc) {
+        return isSignedIn() && doc.ownerId == request.auth.uid;
       }
 
-      allow create: if (isVerifiedUser() || !isSignedIn())
+      // Role-based permissions: admin can create, staff and admin can create, viewers cannot
+      allow create: if isSignedIn()
         && isValidId(documentId) 
         && isValidDocument(incoming())
         && incoming().id == documentId
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
-        && isOwner();
+        && incoming().ownerId == request.auth.uid
+        && (isAdmin() || isStaffOrAdmin());  // Only admin and staff can create
 
-      allow update: if (isVerifiedUser() || !isSignedIn())
+      // Role-based permissions: admin can update all, staff can update own, viewers cannot
+      allow update: if isSignedIn()
         && isValidId(documentId)
         && isValidDocument(incoming())
         && incoming().id == existing().id
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && incoming().ownerId == existing().ownerId;
+        && incoming().ownerId == existing().ownerId
+        && (isAdmin() || (isStaffOrAdmin() && isDocumentOwner(existing())));
 
-      allow delete: if (isVerifiedUser() || !isSignedIn())
+      // Role-based permissions: admin can delete all, staff can delete own, viewers cannot
+      allow delete: if isSignedIn()
         && isValidId(documentId)
-        && (isVerifiedUser() && existing().ownerId == request.auth.uid
-           || !isSignedIn() && existing().ownerId is string && existing().ownerId.matches('^guest-.*'));
+        && (isAdmin() || (isStaffOrAdmin() && isDocumentOwner(existing())));
     }
   }
 }
