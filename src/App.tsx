@@ -135,8 +135,26 @@ export default function App() {
       console.log("[v0] Email sign-in successful:", email);
     } catch (err) {
       console.error("[v0] Sign in failed:", err);
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      setErrorMessage("Đăng nhập thất bại: " + errorMessage);
+      let errorMessage = "Đăng nhập thất bại";
+      
+      if (err instanceof Error) {
+        const errorCode = (err as any).code;
+        console.log("[v0] Error code:", errorCode);
+        
+        if (errorCode === "auth/operation-not-allowed") {
+          errorMessage = "Email/mật khẩu chưa được bật trong Firebase Console. Vui lòng bật tính năng này trong Authentication settings.";
+        } else if (errorCode === "auth/user-not-found") {
+          errorMessage = "Email không được tìm thấy. Vui lòng tạo tài khoản trước.";
+        } else if (errorCode === "auth/wrong-password") {
+          errorMessage = "Mật khẩu không chính xác.";
+        } else if (errorCode === "auth/invalid-email") {
+          errorMessage = "Email không hợp lệ.";
+        } else {
+          errorMessage = "Lỗi: " + err.message;
+        }
+      }
+      
+      setErrorMessage(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -155,8 +173,26 @@ export default function App() {
       console.log("[v0] Sign up successful:", email);
     } catch (err) {
       console.error("[v0] Sign up failed:", err);
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      setErrorMessage("Tạo tài khoản thất bại: " + errorMessage);
+      let errorMessage = "Tạo tài khoản thất bại";
+      
+      if (err instanceof Error) {
+        const errorCode = (err as any).code;
+        console.log("[v0] Error code:", errorCode);
+        
+        if (errorCode === "auth/operation-not-allowed") {
+          errorMessage = "Email/mật khẩu chưa được bật trong Firebase Console. Vui lòng vào Authentication → Sign-in method → bật Email/Password.";
+        } else if (errorCode === "auth/email-already-in-use") {
+          errorMessage = "Email này đã được đăng ký.";
+        } else if (errorCode === "auth/weak-password") {
+          errorMessage = "Mật khẩu quá yếu. Vui lòng sử dụng mật khẩu mạnh hơn (ít nhất 6 ký tự).";
+        } else if (errorCode === "auth/invalid-email") {
+          errorMessage = "Email không hợp lệ.";
+        } else {
+          errorMessage = "Lỗi: " + err.message;
+        }
+      }
+      
+      setErrorMessage(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -486,6 +522,8 @@ export default function App() {
         onSignIn={handleEmailSignIn}
         onSignUp={handleEmailSignUp}
         isLoading={loading}
+        externalError={errorMessage}
+        onClearError={() => setErrorMessage(null)}
       />
     );
   }

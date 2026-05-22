@@ -10,22 +10,30 @@ interface LoginFormProps {
   onSignIn: (email: string, password: string) => Promise<void>;
   onSignUp: (email: string, password: string, displayName: string) => Promise<void>;
   isLoading?: boolean;
+  externalError?: string | null;
+  onClearError?: () => void;
 }
 
 export const LoginForm: React.FC<LoginFormProps> = ({
   onSignIn,
   onSignUp,
   isLoading = false,
+  externalError = null,
+  onClearError = () => {},
 }) => {
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  
+  // Use external error if provided, otherwise use local error
+  const displayError = externalError || error;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    onClearError?.();
 
     try {
       // Basic validation
@@ -82,10 +90,10 @@ export const LoginForm: React.FC<LoginFormProps> = ({
           {isSignUp ? "Tạo tài khoản" : "Đăng nhập"}
         </h2>
 
-        {error && (
+        {displayError && (
           <div className="login-form-error">
             <span className="error-icon">⚠️</span>
-            {error}
+            {displayError}
           </div>
         )}
 
