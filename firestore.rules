@@ -87,22 +87,32 @@ service cloud.firestore {
       // Allow any visitor to view documents (both single document and listings)
       allow read: if true;
 
-      allow create: if isVerifiedUser() 
+      // Helper to check if user is owner (verified user or guest session)
+      function isOwner() {
+        return (isVerifiedUser() && incoming().ownerId == request.auth.uid) 
+            || (!isSignedIn() && incoming().ownerId is string && incoming().ownerId.matches('^guest-.*'));
+      }
+
+      allow create: if (isVerifiedUser() || !isSignedIn())
         && isValidId(documentId) 
         && isValidDocument(incoming())
         && incoming().id == documentId
         && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
+        && incoming().updatedAt == request.time
+        && isOwner();
 
-      allow update: if isVerifiedUser()
+      allow update: if (isVerifiedUser() || !isSignedIn())
         && isValidId(documentId)
         && isValidDocument(incoming())
         && incoming().id == existing().id
         && incoming().createdAt == existing().createdAt
-        && incoming().updatedAt == request.time;
+        && incoming().updatedAt == request.time
+        && incoming().ownerId == existing().ownerId;
 
-      allow delete: if isVerifiedUser()
-        && isValidId(documentId);
+      allow delete: if (isVerifiedUser() || !isSignedIn())
+        && isValidId(documentId)
+        && (isVerifiedUser() && existing().ownerId == request.auth.uid
+           || !isSignedIn() && existing().ownerId is string && existing().ownerId.matches('^guest-.*'));
     }
   }
 }
