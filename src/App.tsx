@@ -78,6 +78,15 @@ export default function App() {
   // Firebase Auth and Database synchronizations status state
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(false);
+  
+  // Guest session ID for anonymous users to enable data sharing
+  const [guestSessionId] = useState(() => {
+    const stored = localStorage.getItem("guestSessionId");
+    if (stored) return stored;
+    const newId = `guest-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    localStorage.setItem("guestSessionId", newId);
+    return newId;
+  });
 
   // Listen to Auth State
   useEffect(() => {
@@ -238,30 +247,19 @@ export default function App() {
 
   // Thao tác 1: Lưu (Thêm mới hoặc Cập nhật)
   const handleSaveDocument = async (savedDoc: DocumentItem) => {
-    if (!user) {
-      // Offline fallback LocalStorage logic nếu chưa đăng nhập
-      const isEditing = documents.some((doc) => doc.id === savedDoc.id);
-      let updatedDocs: DocumentItem[];
-      if (isEditing) {
-        updatedDocs = documents.map((doc) => (doc.id === savedDoc.id ? savedDoc : doc));
-      } else {
-        updatedDocs = [savedDoc, ...documents];
-      }
-      updateDocumentsState(updatedDocs);
-      setIsFormOpen(false);
-      setEditingDoc(null);
-      return;
-    }
-
     try {
       setLoading(true);
       const isEditing = documents.some((doc) => doc.id === savedDoc.id);
       const docRef = doc(db, "documents", savedDoc.id);
+      
+      // Determine owner ID: user.uid if logged in, otherwise use guest session ID
+      const ownerId = user?.uid || guestSessionId;
 
       if (isEditing) {
         const origDoc = documents.find((doc) => doc.id === savedDoc.id);
         const origCreatedAt = origDoc?.createdAt || serverTimestamp();
-        const origOwnerId = origDoc?.ownerId || user.uid; // Bảo lưu ownerId chính gốc của văn bản
+        const origOwnerId = origDoc?.ownerId || ownerId;
+        
         await setDoc(docRef, {
           id: savedDoc.id,
           loaiVanBan: savedDoc.loaiVanBan,
@@ -297,7 +295,7 @@ export default function App() {
           isQuyTrinhNoiBo: savedDoc.isQuyTrinhNoiBo ?? false,
           ghiChu: savedDoc.ghiChu ?? "",
           fileDinhKem: savedDoc.fileDinhKem || [],
-          ownerId: user.uid,
+          ownerId: ownerId,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
@@ -305,7 +303,9 @@ export default function App() {
 
       setIsFormOpen(false);
       setEditingDoc(null);
+      console.log("[v0] Document saved with ownerId:", ownerId);
     } catch (err) {
+      console.error("[v0] Error saving document:", err);
       handleFirestoreError(err, savedDoc.id ? OperationType.UPDATE : OperationType.CREATE, `documents/${savedDoc.id}`);
     } finally {
       setLoading(false);
@@ -334,19 +334,25 @@ export default function App() {
 
   // Thao tác 4: Xóa văn bản
   const handleDeleteDocument = async (id: string) => {
-    if (!user) {
-      const updatedDocs = documents.filter((doc) => doc.id !== id);
-      updateDocumentsState(updatedDocs);
-      return;
-    }
-
     try {
       setLoading(true);
       setErrorMessage(null);
+      
+      // Check if user owns the document
+      const docToDelete = documents.find((doc) => doc.id === id);
+      const ownerId = user?.uid || guestSessionId;
+      
+      if (docToDelete && docToDelete.ownerId !== ownerId) {
+        setErrorMessage("Bạn không có quyền xóa văn bản này. Chỉ người tạo văn bản mới có thể xóa.");
+        setLoading(false);
+        return;
+      }
+      
       await deleteDoc(doc(db, "documents", id));
+      console.log("[v0] Document deleted successfully");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error("Delete document error Detail:", msg);
+      console.error("[v0] Delete document error:", msg);
       // Giúp người dùng nhìn thấy lỗi phân quyền một cách lịch sự, dễ hiểu
       if (msg.toLowerCase().includes("permission") || msg.toLowerCase().includes("quota") || msg.toLowerCase().includes("insufficient")) {
         setErrorMessage("Bạn không có quyền thực hiện thao tác xóa văn bản này, hoặc hạn ngạch cơ sở dữ liệu đã bị vượt quá. Vui lòng kiểm tra lại tài khoản chính chủ của bạn.");
